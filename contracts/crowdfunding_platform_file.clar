@@ -1,4 +1,4 @@
-;; Crowdfunding Platform Smart Contract
+;; Crowdfunding Platform Smart Contract for stacks blockchain
 
 ;; Constants for error handling
 (define-constant ERR_NOT_AUTHORIZED (err u100))
@@ -67,7 +67,7 @@
 )
 ;; Public functions
 
-;; Create a new campaign
+;; Create a new campaign 
 (define-public (create-campaign (title (string-ascii 100))
                               (description (string-ascii 500))
                               (goal uint)
