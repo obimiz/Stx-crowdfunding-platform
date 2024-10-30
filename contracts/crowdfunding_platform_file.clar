@@ -182,3 +182,184 @@
                 (ok true))
             ERR_NOT_AUTHORIZED))
 )
+
+
+;; Helper function to update milestone list
+(define-private (update-milestone-at-index 
+    (milestone {
+        description: (string-ascii 100),
+        amount: uint,
+        released: bool,
+        approved: bool
+    })
+    (state {
+        current-index: uint,
+        target-index: uint,
+        acc: (list 5 {
+            description: (string-ascii 100),
+            amount: uint,
+            released: bool,
+            approved: bool
+        })
+    }))
+    {
+        current-index: (+ (get current-index state) u1),
+        target-index: (get target-index state),
+        acc: (unwrap-panic (as-max-len? 
+            (append (get acc state)
+                (if (is-eq (get current-index state) (get target-index state))
+                    (merge milestone {released: true})
+                    milestone))
+            u5))
+    })
+
+;; Release milestone payment
+(define-public (release-milestone (campaign-id uint) (milestone-index uint))
+    (let ((campaign (unwrap! (map-get? Campaigns campaign-id) ERR_CAMPAIGN_NOT_FOUND))
+          (milestone (unwrap! (element-at (get milestones campaign) milestone-index) 
+                            ERR_INVALID_MILESTONE)))
+        (if (and
+                (is-eq tx-sender (var-get admin))
+                (get approved milestone)
+                (not (get released milestone)))
+            (begin
+                ;; Transfer milestone amount
+                (try! (as-contract (stx-transfer? 
+                                    (get amount milestone) 
+                                    tx-sender 
+                                    (get creator campaign))))
+                
+                ;; Update milestones using fold
+                (let ((initial-state {
+                        current-index: u0,
+                        target-index: milestone-index,
+                        acc: (list)
+                     })
+                     (updated-milestones (get acc (fold update-milestone-at-index 
+                                                      (get milestones campaign)
+                                                      initial-state))))
+                    
+                    ;; Update campaign with new milestones
+                    (map-set Campaigns campaign-id
+                        (merge campaign {milestones: updated-milestones}))
+                    (ok true)))
+            ERR_NOT_AUTHORIZED))
+)
+
+
+;; Helper function to update milestone list for approval
+(define-private (update-milestone-for-approval 
+    (milestone {
+        description: (string-ascii 100),
+        amount: uint,
+        released: bool,
+        approved: bool
+    })
+    (state {
+        current-index: uint,
+        target-index: uint,
+        acc: (list 5 {
+            description: (string-ascii 100),
+            amount: uint,
+            released: bool,
+            approved: bool
+        })
+    }))
+    {
+        current-index: (+ (get current-index state) u1),
+        target-index: (get target-index state),
+        acc: (unwrap-panic (as-max-len? 
+            (append (get acc state)
+                (if (is-eq (get current-index state) (get target-index state))
+                    (merge milestone {approved: true})
+                    milestone))
+            u5))
+    })
+
+;; Approve milestone
+(define-public (approve-milestone (campaign-id uint) (milestone-index uint))
+    (let ((campaign (unwrap! (map-get? Campaigns campaign-id) ERR_CAMPAIGN_NOT_FOUND))
+          (milestone (unwrap! (element-at (get milestones campaign) milestone-index)
+                            ERR_INVALID_MILESTONE)))
+        (if (is-eq tx-sender (var-get admin))
+            (begin
+                ;; Create initial state for fold
+                (let ((initial-state {
+                        current-index: u0,
+                        target-index: milestone-index,
+                        acc: (list)
+                     })
+                     ;; Update milestones using fold
+                     (updated-milestones (get acc (fold update-milestone-for-approval 
+                                                      (get milestones campaign)
+                                                      initial-state))))
+                    
+                    ;; Update campaign with new milestones
+                    (map-set Campaigns campaign-id
+                        (merge campaign {milestones: updated-milestones}))
+                    (ok true)))
+            ERR_NOT_AUTHORIZED))
+)
+
+;; Optional: Combined helper function that can be used for both approve and release
+(define-private (update-milestone-status 
+    (milestone {
+        description: (string-ascii 100),
+        amount: uint,
+        released: bool,
+        approved: bool
+    })
+    (state {
+        current-index: uint,
+        target-index: uint,
+        update-approved: bool,
+        update-released: bool,
+        acc: (list 5 {
+            description: (string-ascii 100),
+            amount: uint,
+            released: bool,
+            approved: bool
+        })
+    }))
+    {
+        current-index: (+ (get current-index state) u1),
+        target-index: (get target-index state),
+        update-approved: (get update-approved state),
+        update-released: (get update-released state),
+        acc: (unwrap-panic (as-max-len? 
+            (append (get acc state)
+                (if (is-eq (get current-index state) (get target-index state))
+                    (merge milestone 
+                        {approved: (if (get update-approved state) 
+                                     true 
+                                     (get approved milestone)),
+                         released: (if (get update-released state)
+                                     true
+                                     (get released milestone))})
+                    milestone))
+            u5))
+    })
+
+;; Alternative version using the combined helper
+(define-public (approve-milestone-alt (campaign-id uint) (milestone-index uint))
+    (let ((campaign (unwrap! (map-get? Campaigns campaign-id) ERR_CAMPAIGN_NOT_FOUND))
+          (milestone (unwrap! (element-at (get milestones campaign) milestone-index)
+                            ERR_INVALID_MILESTONE)))
+        (if (is-eq tx-sender (var-get admin))
+            (begin
+                (let ((initial-state {
+                        current-index: u0,
+                        target-index: milestone-index,
+                        update-approved: true,
+                        update-released: false,
+                        acc: (list)
+                     })
+                     (updated-milestones (get acc (fold update-milestone-status 
+                                                      (get milestones campaign)
+                                                      initial-state))))
+                    
+                    (map-set Campaigns campaign-id
+                        (merge campaign {milestones: updated-milestones}))
+                    (ok true)))
+            ERR_NOT_AUTHORIZED))
+)
