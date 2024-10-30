@@ -1,4 +1,4 @@
-;; Crowdfunding Platform Smart Contract for stacks blockchain
+;; Crowdfunding Platform Smart Contract
 
 ;; Constants for error handling
 (define-constant ERR_NOT_AUTHORIZED (err u100))
@@ -67,7 +67,7 @@
 )
 ;; Public functions
 
-;; Create a new campaign 
+;; Create a new campaign
 (define-public (create-campaign (title (string-ascii 100))
                               (description (string-ascii 500))
                               (goal uint)
@@ -97,4 +97,88 @@
                 (var-set campaign-count campaign-id)
                 (ok campaign-id))
             (err u1)))
+)
+
+;; Contribute to a campaign
+(define-public (contribute (campaign-id uint))
+    (let ((amount (stx-get-balance tx-sender))
+          (campaign (unwrap! (map-get? Campaigns campaign-id) ERR_CAMPAIGN_NOT_FOUND))
+          (current-contribution (default-to {amount: u0, refunded: false}
+                                         (map-get? CampaignContributions 
+                                                  {campaign-id: campaign-id, contributor: tx-sender}))))
+        (if (and
+                (is-eq (get status campaign) "active")
+                (< block-height (get deadline campaign)))
+            (begin
+                ;; Transfer STX
+                (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+                
+                ;; Update campaign
+                (map-set Campaigns campaign-id
+                    (merge campaign 
+                          {raised: (+ (get raised campaign) amount)}))
+                
+                ;; Update contribution record
+                (map-set CampaignContributions 
+                        {campaign-id: campaign-id, contributor: tx-sender}
+                        {amount: (+ (get amount current-contribution) amount),
+                         refunded: false})
+                (ok true))
+            ERR_CAMPAIGN_ENDED))
+)
+
+;; Claim funds (for campaign creator)
+(define-public (claim-funds (campaign-id uint))
+    (let ((campaign (unwrap! (map-get? Campaigns campaign-id) ERR_CAMPAIGN_NOT_FOUND)))
+        (if (and
+                (is-eq tx-sender (get creator campaign))
+                (>= (get raised campaign) (get goal campaign))
+                (>= block-height (get deadline campaign))
+                (not (get claimed campaign)))
+            (begin
+                (let ((platform-fee-amount (calculate-platform-fee (get raised campaign)))
+                      (creator-amount (- (get raised campaign) platform-fee-amount)))
+                    ;; Transfer platform fee
+                    (try! (as-contract (stx-transfer? platform-fee-amount tx-sender (var-get admin))))
+                    ;; Transfer funds to creator
+                    (try! (as-contract (stx-transfer? creator-amount tx-sender (get creator campaign))))
+                    ;; Update campaign status
+                    (map-set Campaigns campaign-id
+                        (merge campaign 
+                              {claimed: true,
+                               status: "successful"}))
+                    (ok true)))
+            ERR_NOT_AUTHORIZED))
+)
+
+;; Admin Functions
+
+;; Update platform fee
+(define-public (update-platform-fee (new-fee uint))
+    (if (is-eq tx-sender (var-get admin))
+        (begin
+            (var-set platform-fee new-fee)
+            (ok true))
+        ERR_NOT_AUTHORIZED)
+)
+
+;; Change admin
+(define-public (change-admin (new-admin principal))
+    (if (is-eq tx-sender (var-get admin))
+        (begin
+            (var-set admin new-admin)
+            (ok true))
+        ERR_NOT_AUTHORIZED)
+)
+
+;; Cancel campaign (only by creator or admin)
+(define-public (cancel-campaign (campaign-id uint))
+    (let ((campaign (unwrap! (map-get? Campaigns campaign-id) ERR_CAMPAIGN_NOT_FOUND)))
+        (if (or (is-eq tx-sender (get creator campaign))
+                (is-eq tx-sender (var-get admin)))
+            (begin
+                (map-set Campaigns campaign-id
+                    (merge campaign {status: "cancelled"}))
+                (ok true))
+            ERR_NOT_AUTHORIZED))
 )
